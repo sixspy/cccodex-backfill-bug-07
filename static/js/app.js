@@ -90,24 +90,75 @@ async function renderCoverage(){
 }
 
 
-async function render_ledger(){
-  const j = await api('/api/resume/panels');
-  view.innerHTML = `<div class="wall">${(j.ledger||[]).map(r=>`<article class="card"><h3>片 ${r.slice_no}</h3><span class="tag">${r.status}</span></article>`).join('')||'<p class="muted">空</p>'}
-    <article class="card"><button id="p" type="button">暂停到片3</button>
-    <button class="primary" id="g" type="button">续灌</button></article></div>`;
-  document.getElementById('p').onclick = async ()=>{ try{ await api('/api/resume/pause',{method:'POST',body:'{"slice_no":3}'}); setMsg('已暂停'); await render_ledger(); }catch(e){setMsg(e.message,true);} };
-  document.getElementById('g').onclick = async ()=>{ try{ const r=await api('/api/resume/go',{method:'POST',body:'{}'}); setMsg(r.chip); await render_ledger(); }catch(e){setMsg(e.message,true);} };
+function gapChip(active){
+  return active ? '<span class="tag chip-gap" id="gap-chip">跳空</span>' : '<span class="tag chip-ok" id="gap-chip">无跳空</span>';
 }
-async function render_detail(){ const j=await api('/api/resume/panels'); view.innerHTML=`<div class="card"><p>现行偏移 ${j.detail.live}</p><p>可灌进度 ${j.detail.gate}</p></div>`; }
-async function render_strategy(){ const j=await api('/api/resume/panels'); view.innerHTML=`<div class="card"><span class="tag">${j.strategy.btn}</span><p>${j.strategy.fate}</p></div>`; }
-async function render_water(){ const j=await api('/api/resume/panels'); view.innerHTML=`<div class="card"><p>重写 ${j.water.rewritten.length}</p><p>跳空 ${j.water.skipped.length}</p></div>`; }
+
+async function renderResume(){
+  const j = await api('/api/resume/panels');
+  const gapActive = !!(j.detail && j.detail.chip === '跳空');
+  const sameSrc = j.detail.same_source;
+  const ledger = (j.ledger||[]).map(r=>{
+    const gap = r.status==='跳空';
+    return `<article class="card ${gap?'card-gap':''}">
+      <h3>片 ${r.slice_no} ${gap?'<span class="tag chip-gap">跳空</span>':''}</h3>
+      <span class="tag">${r.status}</span>
+    </article>`;
+  }).join('') || '<p class="muted">空</p>';
+  const events = (j.events||[]).map(e=>`<li><span class="muted">${e.created_at}</span> ${e.event} ${e.from_offset??''}→${e.to_offset??''} <span class="muted">${e.detail||''}</span></li>`).join('') || '<li class="muted">暂无留痕</li>';
+  view.innerHTML = `
+  <div class="panel-grid">
+    <section class="card panel" id="panel-ledger">
+      <h3>跳空台账 ${gapChip(gapActive)}</h3>
+      <div class="wall ledger-wall">${ledger}</div>
+      <div class="row-actions">
+        <button id="p" type="button">暂停到片3</button>
+        <button class="primary" id="g" type="button">续灌</button>
+      </div>
+    </section>
+    <section class="card panel" id="panel-detail">
+      <h3>偏移详情 ${gapChip(gapActive)}</h3>
+      <p>现行偏移 <b>${j.detail.live}</b></p>
+      <p>可灌进度 <b>${j.detail.gate}</b></p>
+      <p>同源校验：${sameSrc ? '<span class="ok-text">双位同源放行</span>' : '<span class="err">双位不一致已拦截</span>'}</p>
+      <p class="muted">水线复验：${j.recheck.continuous ? `序号连续 ${(j.recheck.range||[]).join('~')}` : `发现空档 ${(j.recheck.missing||[]).join(',')}`}</p>
+    </section>
+    <section class="card panel" id="panel-strategy">
+      <h3>续跑策略 ${gapChip(gapActive)}</h3>
+      <span class="tag">${j.strategy.btn}</span>
+      <p>${j.strategy.fate}</p>
+      <p class="muted">打开即回滚半截重写，旁路位点凭证原子切换，旧偏移被挡不再占灌。</p>
+    </section>
+    <section class="card panel" id="panel-water">
+      <h3>覆盖水线 ${gapChip(gapActive)}</h3>
+      <p>重写片 <b>${j.water.rewritten.length}</b>（成功片不得被重写）</p>
+      <p>跳空片 <b>${j.water.skipped.length}</b>：${(j.water.skipped||[]).map(s=>s.slice_no).join('、')||'无'}</p>
+      <p>水线偏移 <b>${j.water.live_offset}</b> / 可灌 <b>${j.water.gate_offset}</b></p>
+      <p class="muted">切片与水线复验${j.water.recheck.continuous?'通过，未跳空':'不通过：'+(j.water.recheck.missing||[]).join(',')}</p>
+    </section>
+  </div>
+  <section class="card panel" style="margin-top:0.85rem">
+    <h3>编排留痕</h3>
+    <ul class="events">${events}</ul>
+  </section>`;
+  document.getElementById('p').onclick = async ()=>{
+    try{ await api('/api/resume/pause',{method:'POST',body:'{"slice_no":3}'}); setMsg('已暂停到片3'); await renderResume(); }
+    catch(e){ setMsg(e.message,true); }
+  };
+  document.getElementById('g').onclick = async ()=>{
+    try{
+      const r = await api('/api/resume/go',{method:'POST',body:'{}'});
+      setMsg(`续灌完成：位点 ${r.from_offset} → ${r.offset}，跳空片 ${(r.gap_slices||[]).join('、')} 待补，旧成功片未重写`);
+      await renderResume();
+    }catch(e){ setMsg(e.message,true); }
+  };
+}
 
 async function show(tab){
   setMsg(''); await loadWindows();
-  if (tab==='ledger') await render_ledger();
-  if (tab==='detail') await render_detail();
-  if (tab==='strategy') await render_strategy();
-  if (tab==='water') await render_water();
+  await renderResume();
+  const target = document.getElementById('panel-' + tab);
+  if (target) target.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 document.querySelectorAll('.chips button').forEach(btn=>{
   btn.onclick=()=>{ document.querySelectorAll('.chips button').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); show(btn.dataset.tab); };

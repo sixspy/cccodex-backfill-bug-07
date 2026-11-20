@@ -65,7 +65,17 @@ CREATE TABLE IF NOT EXISTS offset_ptr (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   slice_no INTEGER NOT NULL,
-  status TEXT NOT NULL
+  status TEXT NOT NULL,
+  UNIQUE(name, slice_no)
+);
+
+CREATE TABLE IF NOT EXISTS resume_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event TEXT NOT NULL,
+  from_offset INTEGER,
+  to_offset INTEGER,
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 """
